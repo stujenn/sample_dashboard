@@ -1,0 +1,277 @@
+---
+title: "Sample Forecast Dashboard"
+author: "Stuart Jennings"
+resource_files:
+- update_files.R
+output:
+  flexdashboard::flex_dashboard:
+    logo: data/test2.png
+    theme: flatly
+    social: menu
+    source_code: embed
+runtime: shiny
+---
+<style>                     
+.navbar {
+  background-color:lavender;
+  border-color:black;
+}
+.navbar-brand {
+color:black!important;
+}
+.navmenu {
+color:black!important;
+}
+</style>
+
+<script>
+$('.navbar-logo').wrap('<a href="http://www.doterra.com" target=_blank>');
+</script>
+
+```{r, echo=FALSE}
+# add fun team logo at bottom left
+ htmltools::img(src = knitr::image_uri(file.path("data/cit_full.png")),
+                alt = 'CIT logo', 
+                style = 'position:fixed; bottom:10px; left:10px; padding:10px;')
+
+# add loading gif in middle of screen (some scaling issues on large monitors)
+ htmltools::img(src = knitr::image_uri(file.path("data/timer.gif.gif")),
+                alt = 'Loading...',
+                style = 'position:absolute; width:100px; height:100px; right:550px; bottom:300px; padding:10px;')
+```
+
+```{r global, include=FALSE}
+# load packages
+library(tidyverse)
+library(lubridate)
+library(flexdashboard)
+library(plotly)
+library(shiny)
+library(openxlsx)
+library(data.table)
+
+# initialize number of days passed in the month
+days_passed <- 21
+
+##--------------------------------------MARKET 1 DATA-------------------------------------
+
+# Read in data files
+mkt1_data <- read.csv("data/market1_data.csv", skip = 3, header = TRUE)
+old_mkt1 <- read.csv("data/market1_old.csv", skip = 2)
+
+mkt1_forecast <- read.xlsx("data/market1 Forecast.xlsx", sheet = length(getSheetNames("data/market1 Forecast.xlsx")), detectDates = TRUE)
+
+names(mkt1_forecast) <- c("Day", "Lower 80%", "Forecast", "Upper 80%")
+
+##-------------------------------------MARKET 2 DATA---------------------------------------
+
+# Read in data files
+mkt2_data <- read.csv("data/market2_data.csv", skip = 3, header = TRUE)
+old_mkt2 <- read.csv("data/market2_old.csv", skip = 3)
+mkt2_forecast<- read.xlsx("data/market2 Forecast.xlsx", sheet = length(getSheetNames("data/market2 Forecast.xlsx")), detectDates = TRUE)
+
+names(mkt2_forecast) <- c("Day", "Lower 80%", "Forecast", "Upper 80%")
+
+##-------------------------------------MARKET 3 DATA---------------------------------------
+
+# Read in data files
+mkt3_data <- read.csv("data/market3_data.csv", skip = 3, header = TRUE)
+old_mkt3 <- read.csv("data/market3_old.csv", skip = 4)
+mkt3_forecast<- read.xlsx("data/market3 Forecast.xlsx", sheet = length(getSheetNames("data/market3 Forecast.xlsx")), detectDates = TRUE)
+
+names(mkt3_forecast) <- c("Day", "Lower 80%", "Forecast", "Upper 80%")
+
+##--------------------------------------MARKET 4 DATA--------------------------------------
+
+# Read in data files
+mkt4_data <- read.csv("data/market4_data.csv", skip = 3, header = TRUE)
+old_mkt4 <- read.csv("data/market4_old.csv", skip = 3)
+mkt4_forecast <- read.xlsx("data/market4 Forecast.xlsx", sheet = length(getSheetNames("data/market4 Forecast.xlsx")), detectDates = TRUE)
+
+names(mkt4_forecast) <- c("Day", "Lower 80%", "Forecast", "Upper 80%")
+```
+
+Sidebar {.sidebar}
+=====================================
+
+This is a sample interactive dashboard of call forecasts for different markets.
+
+First, select your market at the top of the page, and view your desired forecast by following the instructions below.
+
+**Step 1**
+
+```{r}
+# protect data with password
+passwordInput("pwIn", label = "Enter password (pass123):")
+```
+
+**Step 2**
+
+```{r}
+# date range selector
+dateRangeInput("inDateRange", "Select the number of days you wish to predict:",
+               end = "2020-12-31")
+```
+
+**Step 3**
+
+Feel free to explore the zooming and window options found on the top left!
+
+**Step 4** 
+
+Profit!
+
+```{r}
+# Build graphing function to use for each market
+
+graph <- function(date1 = "2018-05-20", date2 = paste0("2020-01-", days_passed), fc_len = "2020-12-31", ts, fc, skill, type = "Arrivals", ci95 = FALSE){
+
+  datad <- seq(as.Date(date1), as.Date(date2), by = 1) 
+  
+  predd <- reactive({
+    seq(as.Date(input$inDateRange[1], origin = "1970-01-01"), as.Date(input$inDateRange[2], origin = "1970-01-01"), by = 1)
+    })
+  
+  # Plot data along with forecast
+  renderPlotly({
+    # add password protection (not super secure...) and validate field selection
+    validate(
+      need(input$pwIn=="pass123", "Please enter the password to view the data!"),
+      need(input$inDateRange[2] <= as.Date(fc_len), paste0("ERROR: Please enter a valid date (forecast extends to ", fc_len, ")!")),
+      need(input$inDateRange[1] == today(tzone = "MST"), "ERROR: Start date must be the current date!"),
+      need(input$inDateRange[2] >= today(tzone = "MST"), "ERROR: End date must be greater than or equal to the current date!")
+    )
+    # build graph for forecasts with only 80% CIs
+    if (ci95 == FALSE) {
+      plot_ly() %>%
+        # add historical data
+        add_lines(x = datad, y = ts,
+                  color = I("black"), name = "observed") %>%
+        # add 80% CI
+        add_ribbons(x = predd(),
+                    ymin = fc$`Lower 80%`[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                    ymax = fc$`Upper 80%`[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                    color = I("royalblue1"),
+                    name = "80% confidence") %>%
+        # add forecast
+        add_lines(x = predd(),
+                  y = fc$Forecast[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                  color = I("blue"),
+                  name = "prediction") %>% 
+        layout(title = paste(skill, type, "Forecast", sep = " "),
+               xaxis = list(title = "Date"),
+               yaxis = list(title = paste("Daily", type, sep = " "),
+                            rangemode = "nonnegative"))
+    }
+    else { # build graph for 95% CI forecasts
+      plot_ly() %>%
+        # add historical data
+        add_lines(x = datad, y = ts,
+                  color = I("black"), name = "observed") %>%
+        # add 95% CI
+        add_ribbons(x = predd(),
+                    ymin = fc$`Lower 95%`[fc$Day %between% c(input$inDateRange[1],input$inDateRange[2])],
+                    ymax = fc$`Upper 95%`[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                    color = I("lightskyblue"),
+                    name = "95% confidence") %>%
+        # add 80% CI
+        add_ribbons(x = predd(),
+                    ymin = fc$`Lower 80%`[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                    ymax = fc$`Upper 80%`[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                    color = I("royalblue1"),
+                    name = "80% confidence") %>%
+        # add forecast
+        add_lines(x = predd(),
+                  y = fc$Forecast[fc$Day %between% c(input$inDateRange[1], input$inDateRange[2])],
+                  color = I("blue"),
+                  name = "prediction") %>% 
+        layout(title = paste(skill, type, "Forecast", sep = " "),
+               xaxis = list(title = "Date"),
+               yaxis = list(title = paste("Daily", type, sep = " "),
+                            rangemode = "nonnegative")) 
+    }
+  })
+}
+```
+
+Market 1 {data-navmenu="Calls" data-icon="fa-football-ball"}
+===================================== 
+
+### Arrivals Forecast
+
+```{r}
+# Select only date and call columns
+mkt1_calls <- mkt1_data[-1,c(1,5)]
+old_mkt1 <- old_mkt1[-374, c(1,4)]
+names(old_mkt1) <- c("Date", "Arrivals")
+
+# Join data files to account for disappearing May '18 data
+mkt1_calls <- dplyr::union(old_mkt1, mkt1_calls)
+
+ts1 <- ts(mkt1_calls$Arrivals, frequency = 7)
+
+graph(ts = ts1, fc = mkt1_forecast, skill = "Market 1")
+```
+
+Market 2 {data-navmenu="Calls" data-icon="fa-futbol"}
+===================================== 
+
+### Arrivals Forecast
+
+```{r}
+##----------------------------------MARKET 2 NOW-----------------------------------------
+
+# Select only date and call columns
+mkt2_calls <- mkt2_data[-1,c(1,5)]
+old_mkt2 <- old_mkt2[, c(1,4)]
+names(old_mkt2) <- c("Date", "Arrivals")
+
+# Join data files to account for disappearing May '18 data
+mkt2_calls <- dplyr::union(old_mkt2, mkt2_calls)
+
+ts2 <- ts(mkt2_calls$Arrivals, frequency = 7)
+
+graph(ts = ts2, fc = mkt2_forecast, skill = "Market 2")
+```
+
+Market 3 {data-navmenu="Calls" data-icon="fa-money-check-alt"}
+===================================== 
+
+### Arrivals Forecast
+
+```{r}
+##----------------------------------MARKET 3 NOW-----------------------------------------
+
+# Select only date and call columns
+mkt3_calls <- mkt3_data[-1,c(1,5)]
+old_mkt3 <- old_mkt3[, c(1,5)]
+names(old_mkt3) <- c("Date", "Arrivals")
+
+# Join data files to account for disappearing May '18 data
+mkt3_calls <- dplyr::union(old_mkt3, mkt3_calls)
+
+ts3 <- ts(mkt3_calls$Arrivals, frequency = 7)
+
+graph(ts = ts3, fc = mkt3_forecast, skill = "Market 3")
+```
+
+Market 4 {data-navmenu="Calls" data-icon="fa-hockey-puck"}
+===================================== 
+
+### Arrivals Forecast
+
+```{r}
+##----------------------------------------MARKET 4 NOW---------------------------------------------
+
+# Select only date and call columns
+mkt4_calls <- mkt4_data[-1,c(1,5)]
+old_mkt4 <- old_mkt4[-1, c(1,5)]
+names(old_mkt4) <- c("Date", "Arrivals")
+
+# Join data files to account for disappearing May '18 data
+mkt4_calls <- dplyr::union(old_mkt4, mkt4_calls)
+
+ts35 <- ts(mkt4_calls$Arrivals, frequency = 7)
+
+graph(date1 = "2018-05-23", ts = ts35, fc = mkt4_forecast, skill = "Market 4")
+```
